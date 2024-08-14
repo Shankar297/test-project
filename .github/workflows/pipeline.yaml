@@ -40,6 +40,11 @@ jobs:
         with:
           registry-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
+      - name: Set Git User Identity
+        run: |
+          git config --global user.email ${{ secrets.GIT_MAIL }}
+          git config --global user.name ${{ secrets.GIT_NAME }}
+
       - name: Setup Tag for image and branch
         run: |
           echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c 1-6)" >> $GITHUB_ENV
