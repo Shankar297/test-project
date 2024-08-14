@@ -15,7 +15,7 @@ spec:
           serviceAccountName: ods
           containers:
           - name: ods
-            image: 851725327865.dkr.ecr.ap-south-1.amazonaws.com/test:831993
+            image: /:d2e7fa
             imagePullPolicy: Always
             command:
             - /bin/bash
