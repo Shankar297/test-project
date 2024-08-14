@@ -38,7 +38,7 @@ jobs:
       - name: Login to AWS ECR
         uses: aws-actions/amazon-ecr-login@v1
         with:
-          registries: ${{ secrets.ECR_REGISTRY }}
+          registry-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
       - name: Setup Tag for image and branch
         run: |
