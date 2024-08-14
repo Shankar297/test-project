@@ -1,0 +1,129 @@
+# This is a basic workflow to help you get started with Actions
+name: CI
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+      - dev
+      - sit
+      - uat
+      - prod
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    if: github.event.pull_request.merged == true || github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Login to AWS ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry: ${{ secrets.ECR_REGISTRY }}
+
+      - name: Setup Tag for image and branch
+        run: |
+          echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c 1-6)" >> $GITHUB_ENV
+          echo "BRANCH=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      - name: Credential Setup (DEV Environment)
+        if: env.BRANCH == 'dev'
+        run: |
+          echo BRANCH=${{ env.BRANCH }} > .env
+          echo PG_HOST=${{ secrets.POSTGRES_HOST_DEV }} >> .env
+          echo PG_PORT=${{ secrets.POSTGRES_PORT_DEV }} >> .env
+          echo PG_USER=${{ secrets.POSTGRES_USERNAME_DEV }} >> .env
+          echo PG_PASSWORD=${{ secrets.POSTGRES_PASSWORD_DEV }} >> .env
+          echo PG_DATABASE=${{ secrets.POSTGRES_DATABASE_DEV }} >> .env
+        working-directory: files
+
+      - name: Credential Setup (SIT Environment)
+        if: env.BRANCH == 'sit'
+        run: |
+          echo BRANCH=${{ env.BRANCH }} > .env
+          echo PG_HOST=${{ secrets.POSTGRES_HOST_SIT }} >> .env
+          echo PG_PORT=${{ secrets.POSTGRES_PORT_SIT }} >> .env
+          echo PG_USER=${{ secrets.POSTGRES_USERNAME_SIT }} >> .env
+          echo PG_PASSWORD=${{ secrets.POSTGRES_PASSWORD_SIT }} >> .env
+          echo PG_DATABASE=${{ secrets.POSTGRES_DATABASE_SIT }} >> .env
+        working-directory: files
+
+      - name: Credential Setup (UAT Environment)
+        if: env.BRANCH == 'uat'
+        run: |
+          echo BRANCH=${{ env.BRANCH }} > .env
+          echo PG_HOST=${{ secrets.POSTGRES_HOST_UAT }} >> .env
+          echo PG_PORT=${{ secrets.POSTGRES_PORT_UAT }} >> .env
+          echo PG_USER=${{ secrets.POSTGRES_USERNAME_UAT }} >> .env
+          echo PG_PASSWORD=${{ secrets.POSTGRES_PASSWORD_UAT }} >> .env
+          echo PG_DATABASE=${{ secrets.POSTGRES_DATABASE_UAT }} >> .env
+        working-directory: files
+
+      - name: Credential Setup (PROD Environment)
+        if: env.BRANCH == 'prod'
+        run: |
+          echo BRANCH=${{ env.BRANCH }} > .env
+          echo PG_HOST=${{ secrets.POSTGRES_HOST_PROD }} >> .env
+          echo PG_PORT=${{ secrets.POSTGRES_PORT_PROD }} >> .env
+          echo PG_USER=${{ secrets.POSTGRES_USERNAME_PROD }} >> .env
+          echo PG_PASSWORD=${{ secrets.POSTGRES_PASSWORD_PROD }} >> .env
+          echo PG_DATABASE=${{ secrets.POSTGRES_DATABASE_PROD }} >> .env
+        working-directory: files
+
+      - name: Docker build
+        if: env.BRANCH == 'dev' || env.BRANCH == 'uat' || env.BRANCH == 'sit' || env.BRANCH == 'uat-fnf'
+        run: docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPO }}:$IMAGE_TAG .
+
+      - name: Docker build (Prod Environment)
+        if: env.BRANCH == 'master' || env.BRANCH == 'prod'
+        run: docker build -t ${{ secrets.ECR_REGISTRY_PROD }}/${{ secrets.ECR_REPO_PROD }}:$IMAGE_TAG .
+
+      - name: Image push to ECR
+        if: env.BRANCH == 'dev' || env.BRANCH == 'uat' || env.BRANCH == 'sit' || env.BRANCH == 'uat-fnf'
+        run: |
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPO }}:$IMAGE_TAG
+        working-directory: 'devops'
+
+      - name: Image push to ECR (Prod Environment)
+        if: env.BRANCH == 'master' || env.BRANCH == 'prod'
+        run: |
+          docker push ${{ secrets.ECR_REGISTRY_PROD }}/${{ secrets.ECR_REPO_PROD }}:$IMAGE_TAG
+        working-directory: 'devops'
+
+      - name: Deploy to EKS
+        if: env.BRANCH == 'dev' || env.BRANCH == 'sit' || env.BRANCH == 'uat' || env.BRANCH == 'uat-fnf'
+        run: |
+          sed -i 's/image:.*/image: ${{env.ECR_REGISTRY}}\/${{env.ECR_REPO}}:${{env.IMAGE_TAG}}/' ods.yaml
+          git pull
+          git add .
+          git commit -m "tag updated ${{env.IMAGE_TAG}}"
+          git push
+          export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $(aws sts assume-role --role-arn ${{env.ASSUME_ROLE}} --role-session-name MySessionName --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" --output text))
+          aws eks --region ${{env.REGION}} update-kubeconfig --name ${{env.CLUSTER}}
+          kubectl apply -f ods.yaml -n ods-${{env.BRANCH}}
+        working-directory: 'devops'
+
+      - name: Deploy to EKS (Prod Environment)
+        if: env.BRANCH == 'prod'
+        run: |
+          git pull
+          sed -i 's/image:.*/image: ${{env.ECR_REGISTRY_PROD}}\/${{env.ECR_REPO_PROD}}:${{env.IMAGE_TAG}}/' ods.yaml
+          git add .
+          git commit -m "tag updated ${{env.IMAGE_TAG}}"
+          git push
+          export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $(aws sts assume-role --role-arn ${{env.ASSUME_ROLE_PROD}} --role-session-name MySessionName --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" --output text))
+          aws eks --region ${{env.REGION}} update-kubeconfig --name ${{env.CLUSTER_PROD}}
+          kubectl apply -f ods.yaml -n ods
+        working-directory: 'devops'
